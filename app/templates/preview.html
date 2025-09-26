@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Preview | Railway XLSX Builder</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+  <div class="container">
+    <a class="navbar-brand" href="{{ url_for('main.index') }}">Railway XLSX Builder</a>
+    <div class="ms-auto">
+      <a class="btn btn-success" href="{{ url_for('main.download') }}">Download XLSX</a>
+    </div>
+  </div>
+</nav>
+<main class="container py-4">
+  {% if current_project %}
+  <div class="alert alert-success">
+    <strong>Preview for Project:</strong> {{ current_project.name }}
+  </div>
+  {% endif %}
+
+  <h3>Data Preview</h3>
+  {% for name, cols in sheets.items() %}
+    <h5 class="mt-4">{{ name.replace('_', ' ').title() }} ({{ tables[name]|length }} rows)</h5>
+    {% if tables[name] %}
+    <div class="table-responsive">
+      <table class="table table-sm table-bordered">
+        <thead>
+          <tr>{% for c in cols %}<th>{{ c.replace('_', ' ').title() }}</th>{% endfor %}</tr>
+        </thead>
+        <tbody>
+          {% for row in tables[name] %}
+          <tr>
+            {% for col in cols %}
+              <!-- FIXED: Use bracket notation instead of getattr -->
+              <td>{{ row[col] or '' }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-muted">No data entered for this sheet.</p>
+    {% endif %}
+  {% endfor %}
+
+  <div class="mt-4">
+    <a href="{{ url_for('main.index') }}" class="btn btn-secondary">Back to Sheets</a>
+  </div>
+</main>
+</body>
+</html>

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>All Projects | Railway XLSX Builder</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+  <div class="container">
+    <a class="navbar-brand" href="{{ url_for('main.index') }}">Railway XLSX Builder</a>
+    <div class="ms-auto">
+      <a href="{{ url_for('main.index') }}" class="btn btn-outline-light">Back to Current Project</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container py-4">
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      <div class="alert alert-info">
+        {% for m in messages %}<div>{{ m }}</div>{% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <h3>All Railway Projects</h3>
+  <p class="text-muted">Total Projects: {{ projects_data|length }}</p>
+
+  {% if projects_data %}
+  <div class="table-responsive">
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>Project ID</th>
+          <th>Project Name</th>
+          <th>Description</th>
+          <th>Total Rows</th>
+          <th>Sheet Breakdown</th>
+          <th>Created</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for data in projects_data %}
+        <tr>
+          <td><span class="badge bg-primary">{{ data.project.id }}</span></td>
+          <td><strong>{{ data.project.name }}</strong></td>
+          <td>{{ data.project.description or 'No description' }}</td>
+          <td>
+            <span class="badge bg-success">{{ data.total_rows }}</span>
+          </td>
+          <td>
+            <small>
+              {% for sheet_name, count in data.sheet_counts.items() %}
+                {% if count > 0 %}
+                  {{ sheet_name }}: {{ count }}<br>
+                {% endif %}
+              {% endfor %}
+              {% if data.total_rows == 0 %}
+                <em class="text-muted">No data</em>
+              {% endif %}
+            </small>
+          </td>
+          <td>
+            <small>{{ data.project.created_date.strftime('%Y-%m-%d<br>%H:%M')|safe }}</small>
+          </td>
+          <td>
+            <div class="btn-group" role="group">
+              <a href="{{ url_for('main.switch_project', project_id=data.project.id) }}" 
+                 class="btn btn-sm btn-primary">Switch</a>
+              {% if data.project.id != session.get('project_id') %}
+              <form method="post" action="{{ url_for('main.delete_project', project_id=data.project.id) }}" 
+                    onsubmit="return confirm('Delete Project ID {{ data.project.id }}? This will delete {{ data.total_rows }} records!')" 
+                    style="display: inline;">
+                <button class="btn btn-sm btn-outline-danger">Delete</button>
+              </form>
+              {% else %}
+              <span class="badge bg-warning">Current</span>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="alert alert-info">
+    No projects found. <a href="{{ url_for('main.new_project') }}">Create your first project</a>.
+  </div>
+  {% endif %}
+
+  <div class="mt-4">
+    <a href="{{ url_for('main.new_project') }}" class="btn btn-primary">Create New Project</a>
+    <a href="{{ url_for('main.index') }}" class="btn btn-secondary">Back to Current Project</a>
+  </div>
+</main>
+</body>
+</html>

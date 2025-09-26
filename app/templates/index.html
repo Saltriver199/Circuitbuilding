@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Railway XLSX Builder</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+  <div class="container">
+    <a class="navbar-brand" href="{{ url_for('main.index') }}">Railway XLSX Builder</a>
+    <div class="ms-auto">
+      <a class="btn btn-outline-light me-2" href="{{ url_for('main.list_projects') }}">All Projects</a>
+      <a class="btn btn-outline-light me-2" href="{{ url_for('main.preview') }}">Preview All</a>
+      <a class="btn btn-success" href="{{ url_for('main.download') }}">Download XLSX</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container py-4">
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      <div class="alert alert-info">
+        {% for m in messages %}<div>{{ m }}</div>{% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <!-- PROJECT ID DISPLAY -->
+  {% if current_project %}
+  <div class="alert alert-success">
+    <div class="row">
+      <div class="col-md-8">
+        <strong>Current Project:</strong> 
+        <span class="badge bg-primary me-2">ID: {{ current_project.id }}</span>
+        {{ current_project.name }}
+        {% if current_project.description %}
+        <br><small class="text-muted">{{ current_project.description }}</small>
+        {% endif %}
+      </div>
+      <div class="col-md-4 text-end">
+        <small class="text-muted">
+          Created: {{ current_project.created_date.strftime('%Y-%m-%d %H:%M') }}<br>
+          Total Rows: <strong>{{ total_rows }}</strong>
+        </small>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <h3 class="mb-3">Railway Project Sheets</h3>
+  <div class="row">
+    {% for name, cols in SHEETS.items() %}
+    <div class="col-md-6 mb-3">
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title">
+            {{ name.replace('_', ' ').title() }}
+            <span class="badge bg-secondary">{{ tables[name] }} rows</span>
+          </h5>
+          <p class="card-text">{{ HEADER_HINTS.get(name, "") }}</p>
+          <p class="small text-muted">Columns: {{ cols|length }}</p>
+          <a href="{{ url_for('main.sheet_form', name=name) }}" class="btn btn-primary">Open Sheet</a>
+          {% if tables[name] > 0 %}
+          <span class="badge bg-success ms-2">Has Data</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="mt-4">
+    <a href="{{ url_for('main.new_project') }}" class="btn btn-outline-primary">
+      <i class="bi bi-plus"></i> New Project
+    </a>
+    <a href="{{ url_for('main.list_projects') }}" class="btn btn-outline-secondary">
+      <i class="bi bi-list"></i> All Projects ({{ Project.query.count() if Project else '?' }})
+    </a>
+    <form method="post" action="{{ url_for('main.clear_current_project') }}" style="display: inline;">
+      <button class="btn btn-outline-danger" onclick="return confirm('Clear all data from Project ID {{ current_project.id }}?')">
+        <i class="bi bi-trash"></i> Clear Project Data
+      </button>
+    </form>
+  </div>
+</main>
+</body>
+</html>
