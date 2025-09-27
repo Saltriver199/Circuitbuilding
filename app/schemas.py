@@ -1,7 +1,7 @@
 # Complete column schemas extracted from RAILWAYPROJECT.xlsx - all 8 sheets
 SHEETS = {
     "StationDrawing": [
-        "checksum", "Station ID", "diagram_name", "station_name", "station_code",
+        "checksum", "station_id", "diagram_name", "station_name", "station_code",
         "version", "date", "drawn_by", "checked_by", "division", "zone",
         "total_sheet", "designation1", "designation2", "designation3"
     ],

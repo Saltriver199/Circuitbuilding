@@ -1,7 +1,15 @@
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 db = SQLAlchemy()
+
+# Define Indian Standard Time (IST) - UTC +5:30
+IST = timezone(timedelta(hours=5, minutes=30))
+
+# Helper function to get current IST time
+def get_ist_now():
+    """Return current datetime in Indian Standard Time"""
+    return datetime.now(IST)
 
 class Project(db.Model):
     __tablename__ = 'railway_projects'
@@ -9,8 +17,11 @@ class Project(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text)
-    created_date = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_date = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_date = db.Column(db.DateTime, default=get_ist_now)
+    updated_date = db.Column(db.DateTime, default=get_ist_now, onupdate=get_ist_now)
+
+    def __repr__(self):
+        return f'<Project {self.id}: {self.name}>'
 
 class StationDrawing(db.Model):
     __tablename__ = 'station_drawing'
@@ -18,7 +29,7 @@ class StationDrawing(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     project_id = db.Column(db.Integer, db.ForeignKey('railway_projects.id'), nullable=False)
     checksum = db.Column(db.String(100))
-    station_id = db.Column(db.String(100))  # Changed to String to match xlsx
+    station_id = db.Column(db.String(100))
     diagram_name = db.Column(db.String(200))
     station_name = db.Column(db.String(200))
     station_code = db.Column(db.String(50))
@@ -32,7 +43,7 @@ class StationDrawing(db.Model):
     designation1 = db.Column(db.String(200))
     designation2 = db.Column(db.String(200))
     designation3 = db.Column(db.String(200))
-    created_date = db.Column(db.DateTime, default=datetime.utcnow)
+    created_date = db.Column(db.DateTime, default=get_ist_now)
 
 class JunctionBox(db.Model):
     __tablename__ = 'junction_box'
@@ -42,11 +53,11 @@ class JunctionBox(db.Model):
     station_id = db.Column(db.String(100))
     junction_id = db.Column(db.String(100))
     junction_name = db.Column(db.String(200))
-    latitude = db.Column(db.String(100))  # Keep as String to handle empty values
+    latitude = db.Column(db.String(100))
     longitude = db.Column(db.String(100))
     junction_size = db.Column(db.String(100))
     junction_row = db.Column(db.String(100))
-    created_date = db.Column(db.DateTime, default=datetime.utcnow)
+    created_date = db.Column(db.DateTime, default=get_ist_now)
 
 class Circuit(db.Model):
     __tablename__ = 'circuit'
@@ -61,7 +72,7 @@ class Circuit(db.Model):
     position = db.Column(db.String(50))
     terminal = db.Column(db.String(100))
     start_no = db.Column(db.String(100))
-    created_date = db.Column(db.DateTime, default=datetime.utcnow)
+    created_date = db.Column(db.DateTime, default=get_ist_now)
 
 class Terminal(db.Model):
     __tablename__ = 'terminal'
@@ -79,7 +90,7 @@ class Terminal(db.Model):
     output_connected = db.Column(db.String(200))
     output_left = db.Column(db.String(200))
     output_right = db.Column(db.String(200))
-    created_date = db.Column(db.DateTime, default=datetime.utcnow)
+    created_date = db.Column(db.DateTime, default=get_ist_now)
 
 class Group(db.Model):
     __tablename__ = 'group_table'  # 'group' is reserved in PostgreSQL
@@ -91,7 +102,7 @@ class Group(db.Model):
     terminal_no = db.Column(db.String(100))
     input_output = db.Column(db.String(100))
     text = db.Column(db.Text)
-    created_date = db.Column(db.DateTime, default=datetime.utcnow)
+    created_date = db.Column(db.DateTime, default=get_ist_now)
 
 class TerminalHeader(db.Model):
     __tablename__ = 'terminal_header'
@@ -104,7 +115,7 @@ class TerminalHeader(db.Model):
     terminal_end = db.Column(db.String(100))
     input_output = db.Column(db.String(100))
     text = db.Column(db.Text)
-    created_date = db.Column(db.DateTime, default=datetime.utcnow)
+    created_date = db.Column(db.DateTime, default=get_ist_now)
 
 class ChokeTable(db.Model):
     __tablename__ = 'choke_table'
@@ -116,7 +127,7 @@ class ChokeTable(db.Model):
     input_terminal = db.Column(db.String(100))
     output_terminal = db.Column(db.String(100))
     terminal_name = db.Column(db.String(200))
-    created_date = db.Column(db.DateTime, default=datetime.utcnow)
+    created_date = db.Column(db.DateTime, default=get_ist_now)
 
 class ResistorTable(db.Model):
     __tablename__ = 'resistor_table'
@@ -128,4 +139,4 @@ class ResistorTable(db.Model):
     input_terminal = db.Column(db.String(100))
     output_terminal = db.Column(db.String(100))
     resistor_name = db.Column(db.String(200))
-    created_date = db.Column(db.DateTime, default=datetime.utcnow)
+    created_date = db.Column(db.DateTime, default=get_ist_now)

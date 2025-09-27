@@ -1,9 +1,10 @@
-import io
+import os,subprocess,io
 from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, send_file, flash, session
-from openpyxl import Workbook
+from werkzeug.utils import secure_filename
+from openpyxl import Workbook, load_workbook
 from .models import (db, Project, StationDrawing, JunctionBox, Circuit, 
-                     Terminal, Group, TerminalHeader, ChokeTable, ResistorTable)
+                     Terminal, Group, TerminalHeader, ChokeTable, ResistorTable, get_ist_now)
 from .schemas import SHEETS, HEADER_HINTS
 
 bp = Blueprint("main", __name__)
@@ -21,23 +22,33 @@ MODEL_MAP = {
 }
 
 def get_current_project():
-    """Get or create current project in session"""
+    """Get current project from session WITHOUT auto-creating"""
     if 'project_id' not in session:
-        # Create new project
-        project = Project(
-            name=f"RailwayProject_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            description="Generated from Flask XLSX Builder"
-        )
-        db.session.add(project)
-        db.session.commit()
-        session['project_id'] = project.id
-        flash(f"Created new project: {project.name} (ID: {project.id})")
-    return session['project_id']
+        return None  # Don't auto-create, return None
+    
+    project_id = session['project_id']
+    # Verify the project still exists in database
+    project = Project.query.get(project_id)
+    if not project:
+        # Project was deleted, clear from session
+        session.pop('project_id', None)
+        return None
+    
+    return project_id
+
+def allowed_file(filename):
+    """Check if uploaded file has allowed extension"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() == 'xlsx'
 
 @bp.route("/")
 def index():
-    """Main page showing all sheets with row counts"""
+    """Main page - redirect to project selection if no project"""
     project_id = get_current_project()
+    
+    if not project_id:
+        # No project selected, redirect to project selection
+        return redirect(url_for("main.project_selection"))
+    
     current_project = Project.query.get(project_id)
     
     # Get row counts for each sheet
@@ -53,6 +64,162 @@ def index():
                          current_project=current_project,
                          total_rows=total_rows)
 
+@bp.route("/project_selection")
+def project_selection():
+    """Project selection page - shows existing projects and create new option"""
+    projects = Project.query.order_by(Project.created_date.desc()).all()
+    
+    # Get row counts for each project
+    projects_data = []
+    for project in projects:
+        total_rows = 0
+        for sheet_name, model in MODEL_MAP.items():
+            count = model.query.filter_by(project_id=project.id).count()
+            total_rows += count
+        
+        projects_data.append({
+            'project': project,
+            'total_rows': total_rows,
+        })
+    
+    return render_template("project_selection.html", projects_data=projects_data)
+
+@bp.route("/upload/<sheet_name>", methods=["GET", "POST"])
+def upload_sheet(sheet_name):
+    """Universal XLSX upload for any sheet"""
+    if sheet_name not in SHEETS:
+        flash(f"Unknown sheet: {sheet_name}")
+        return redirect(url_for("main.index"))
+    
+    project_id = get_current_project()
+    if not project_id:
+        return redirect(url_for("main.project_selection"))
+    
+    current_project = Project.query.get(project_id)
+    model = MODEL_MAP[sheet_name]
+    expected_headers = SHEETS[sheet_name]
+    
+    if request.method == "POST":
+        # Check if file was uploaded
+        if 'file' not in request.files:
+            flash('No file uploaded')
+            return redirect(request.url)
+        
+        file = request.files['file']
+        
+        # Check if file was selected
+        if file.filename == '':
+            flash('No file selected')
+            return redirect(request.url)
+        
+        # Check if file is allowed
+        if not allowed_file(file.filename):
+            flash('Only XLSX files are allowed')
+            return redirect(request.url)
+        
+        try:
+            # Load the workbook directly from memory
+            wb = load_workbook(file, data_only=True)
+            
+            # Try to find sheet with matching name (case insensitive)
+            sheet_found = None
+            for ws_name in wb.sheetnames:
+                if ws_name.lower() == sheet_name.lower():
+                    sheet_found = ws_name
+                    break
+            
+            if not sheet_found:
+                flash(f'No "{sheet_name}" sheet found in the uploaded file. Available sheets: {", ".join(wb.sheetnames)}')
+                return redirect(request.url)
+            
+            ws = wb[sheet_found]
+            
+            # Get headers from first row
+            headers = []
+            for cell in ws[1]:
+                if cell.value:
+                    headers.append(str(cell.value).strip().lower())
+                else:
+                    headers.append('')
+            
+            # Check if required headers are present (case insensitive)
+            missing_headers = []
+            header_mapping = {}
+            for required_header in expected_headers:
+                found = False
+                for i, file_header in enumerate(headers):
+                    if file_header == required_header.lower():
+                        header_mapping[required_header] = i
+                        found = True
+                        break
+                if not found:
+                    missing_headers.append(required_header)
+            
+            if missing_headers:
+                flash(f'Missing required columns: {", ".join(missing_headers)}')
+                return redirect(request.url)
+            
+            # Process rows and import data
+            imported_count = 0
+            error_count = 0
+            
+            # Start from row 2 (skip header)
+            for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+                try:
+                    # Create data dictionary
+                    data = {'project_id': project_id}
+                    
+                    # Map row values to expected headers
+                    for header in expected_headers:
+                        if header in header_mapping:
+                            col_index = header_mapping[header]
+                            # Get cell value, convert to string and handle None
+                            cell_value = row[col_index] if col_index < len(row) else None
+                            if cell_value is not None:
+                                data[header] = str(cell_value).strip() if str(cell_value).strip() else None
+                            else:
+                                data[header] = None
+                        else:
+                            data[header] = None
+                    
+                    # Check if row has any data (not all None)
+                    has_data = any(data[col] for col in expected_headers if data.get(col))
+                    
+                    if has_data:
+                        # Create record for this sheet
+                        record = model(**data)
+                        db.session.add(record)
+                        imported_count += 1
+                        
+                except Exception as e:
+                    error_count += 1
+                    print(f"Error processing row {row_num}: {str(e)}")
+                    continue
+            
+            # Commit all changes
+            if imported_count > 0:
+                db.session.commit()
+                flash(f'Successfully imported {imported_count} {sheet_name} records to Project ID {project_id}')
+                if error_count > 0:
+                    flash(f'Warning: {error_count} rows had errors and were skipped')
+                return redirect(url_for("main.sheet_form", name=sheet_name))
+            else:
+                flash('No valid data found to import')
+                return redirect(request.url)
+                
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error processing file: {str(e)}')
+            return redirect(request.url)
+    
+    # GET request - show upload form
+    return render_template("upload_sheet.html", 
+                         current_project=current_project,
+                         sheet_name=sheet_name,
+                         expected_headers=expected_headers,
+                         sheet_display_name=sheet_name.replace('_', ' ').title(),
+                         hint=HEADER_HINTS.get(sheet_name, f"Upload {sheet_name} data from XLSX file"))
+
 @bp.route("/sheet/<name>", methods=["GET", "POST"])
 def sheet_form(name):
     """Handle form for individual sheets - add/edit/display"""
@@ -61,6 +228,9 @@ def sheet_form(name):
         return redirect(url_for("main.index"))
     
     project_id = get_current_project()
+    if not project_id:
+        return redirect(url_for("main.project_selection"))
+    
     current_project = Project.query.get(project_id)
     model = MODEL_MAP[name]
     columns = SHEETS[name]
@@ -134,8 +304,10 @@ def sheet_form(name):
                          hint=HEADER_HINTS.get(name, ""),
                          edit_id=edit_id,
                          edit_row=edit_row_dict,
-                         current_project=current_project)
+                         current_project=current_project,
+                         show_upload=True)  # Show upload button for ALL sheets
 
+# ... (rest of the existing routes remain the same - delete_row, edit_row, preview, download, etc.)
 @bp.route("/sheet/<name>/delete/<int:row_id>", methods=["POST"])
 def delete_row(name, row_id):
     """Delete a specific row from database"""
@@ -144,6 +316,9 @@ def delete_row(name, row_id):
         return redirect(url_for("main.index"))
     
     project_id = get_current_project()
+    if not project_id:
+        return redirect(url_for("main.project_selection"))
+    
     model = MODEL_MAP[name]
     
     record = model.query.filter_by(id=row_id, project_id=project_id).first()
@@ -169,6 +344,9 @@ def edit_row(name, row_id):
 def preview():
     """Preview all data before download"""
     project_id = get_current_project()
+    if not project_id:
+        return redirect(url_for("main.project_selection"))
+    
     current_project = Project.query.get(project_id)
     
     table_data = {}
@@ -196,6 +374,10 @@ def preview():
 def download():
     """Generate and download XLSX file"""
     project_id = get_current_project()
+    if not project_id:
+        flash("Please select a project first")
+        return redirect(url_for("main.project_selection"))
+    
     current_project = Project.query.get(project_id)
     
     # Create workbook
@@ -229,7 +411,8 @@ def download():
     wb.save(bio)
     bio.seek(0)
     
-    filename = f"RAILWAYPROJECT_ID{project_id}_{current_project.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    # Use IST time in filename
+    filename = f"RAILWAYPROJECT_ID{project_id}_{current_project.name}_{get_ist_now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     
     flash(f"Downloaded {total_records} records from Project ID {project_id}")
     
@@ -239,29 +422,6 @@ def download():
         download_name=filename,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
-@bp.route("/projects")
-def list_projects():
-    """List all projects with their IDs and row counts"""
-    projects = Project.query.order_by(Project.created_date.desc()).all()
-    
-    # Get row counts for each project
-    projects_data = []
-    for project in projects:
-        total_rows = 0
-        sheet_counts = {}
-        for sheet_name, model in MODEL_MAP.items():
-            count = model.query.filter_by(project_id=project.id).count()
-            sheet_counts[sheet_name] = count
-            total_rows += count
-        
-        projects_data.append({
-            'project': project,
-            'total_rows': total_rows,
-            'sheet_counts': sheet_counts
-        })
-    
-    return render_template("projects.html", projects_data=projects_data)
 
 @bp.route("/project/<int:project_id>/switch")
 def switch_project(project_id):
@@ -290,39 +450,12 @@ def new_project():
     
     return render_template("new_project.html")
 
-@bp.route("/project/<int:project_id>/delete", methods=["POST"])
-def delete_project(project_id):
-    """Delete entire project and all its data"""
-    if project_id == session.get('project_id'):
-        flash("Cannot delete current project. Switch to another project first.")
-        return redirect(url_for("main.list_projects"))
-    
-    project = Project.query.get_or_404(project_id)
-    
-    try:
-        # Count total records before deletion
-        total_deleted = 0
-        # Delete all related data
-        for model in MODEL_MAP.values():
-            count = model.query.filter_by(project_id=project_id).count()
-            model.query.filter_by(project_id=project_id).delete()
-            total_deleted += count
-        
-        # Delete project
-        project_name = project.name
-        db.session.delete(project)
-        db.session.commit()
-        flash(f"Project ID {project_id} '{project_name}' deleted successfully (Deleted {total_deleted} records)")
-    except Exception as e:
-        flash(f"Error deleting project: {str(e)}")
-        db.session.rollback()
-    
-    return redirect(url_for("main.list_projects"))
-
 @bp.route("/clear_current_project", methods=["POST"])
 def clear_current_project():
     """Clear all data from current project but keep project"""
     project_id = get_current_project()
+    if not project_id:
+        return redirect(url_for("main.project_selection"))
     
     try:
         total_deleted = 0
@@ -339,3 +472,128 @@ def clear_current_project():
         db.session.rollback()
     
     return redirect(url_for("main.index"))
+
+@bp.route("/excel_to_pdf", methods=["GET", "POST"])
+def excel_to_pdf():
+    """Upload XLSX and convert to PDF"""
+    project_id = get_current_project()
+    if not project_id:
+        return redirect(url_for("main.project_selection"))
+    
+    current_project = Project.query.get(project_id)
+    
+    if request.method == "POST":
+        # Check if file was uploaded
+        if 'file' not in request.files:
+            flash('No file uploaded')
+            return redirect(request.url)
+        
+        file = request.files['file']
+        
+        # Check if file was selected
+        if file.filename == '':
+            flash('No file selected')
+            return redirect(request.url)
+        
+        # Check if file is XLSX
+        if not (file and allowed_file(file.filename)):
+            flash('Only XLSX files are allowed')
+            return redirect(request.url)
+        
+        try:
+            # Create uploads directory if it doesn't exist
+            upload_dir = os.path.join(os.getcwd(), 'uploads')
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            # Save uploaded file
+            filename = secure_filename(file.filename)
+            timestamp = get_ist_now().strftime('%Y%m%d_%H%M%S')
+            xlsx_filename = f"railway_project_{project_id}_{timestamp}_{filename}"
+            xlsx_path = os.path.join(upload_dir, xlsx_filename)
+            file.save(xlsx_path)
+            
+            # Generate PDF filename
+            pdf_filename = xlsx_filename.replace('.xlsx', '.pdf')
+            pdf_path = os.path.join(upload_dir, pdf_filename)
+            
+            # Run the Excel to PDF converter script
+            converter_script = os.path.join(os.getcwd(), 'excel_to_pdf_converter.py')
+            
+            # Execute the converter script
+            result = subprocess.run([
+                'python', converter_script, xlsx_path, pdf_path
+            ], capture_output=True, text=True, timeout=300)  # 5 minute timeout
+            
+            if result.returncode == 0:
+                flash(f'✅ Successfully converted {filename} to PDF!')
+                # Clean up XLSX file
+                os.remove(xlsx_path)
+                
+                return redirect(url_for('main.pdf_result', 
+                                      filename=pdf_filename, 
+                                      original_name=filename.replace('.xlsx', '.pdf')))
+            else:
+                flash(f'❌ Error converting file: {result.stderr}')
+                # Clean up files on error
+                if os.path.exists(xlsx_path):
+                    os.remove(xlsx_path)
+                return redirect(request.url)
+                
+        except subprocess.TimeoutExpired:
+            flash('❌ Conversion timed out. File might be too large.')
+            if os.path.exists(xlsx_path):
+                os.remove(xlsx_path)
+            return redirect(request.url)
+        except Exception as e:
+            flash(f'❌ Error processing file: {str(e)}')
+            if os.path.exists(xlsx_path):
+                os.remove(xlsx_path)
+            return redirect(request.url)
+    
+    # GET request - show upload form
+    return render_template("excel_to_pdf.html", current_project=current_project)
+
+@bp.route("/pdf_result/<filename>/<original_name>")
+def pdf_result(filename, original_name):
+    """Show PDF result page with download option"""
+    project_id = get_current_project()
+    if not project_id:
+        return redirect(url_for("main.project_selection"))
+    
+    current_project = Project.query.get(project_id)
+    
+    # Check if PDF file exists
+    upload_dir = os.path.join(os.getcwd(), 'uploads')
+    pdf_path = os.path.join(upload_dir, filename)
+    
+    if not os.path.exists(pdf_path):
+        flash('PDF file not found')
+        return redirect(url_for('main.excel_to_pdf'))
+    
+    return render_template("pdf_result.html", 
+                         current_project=current_project,
+                         filename=filename,
+                         original_name=original_name)
+
+@bp.route("/download_pdf/<filename>")
+def download_pdf(filename):
+    """Download the generated PDF"""
+    upload_dir = os.path.join(os.getcwd(), 'uploads')
+    pdf_path = os.path.join(upload_dir, filename)
+    
+    if not os.path.exists(pdf_path):
+        flash('PDF file not found')
+        return redirect(url_for('main.excel_to_pdf'))
+    
+    # Clean up file after download
+    def remove_file(response):
+        try:
+            os.remove(pdf_path)
+        except:
+            pass
+        return response
+    
+    return send_file(pdf_path, 
+                    as_attachment=True, 
+                    download_name=filename,
+                    mimetype='application/pdf')
